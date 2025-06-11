@@ -4,6 +4,7 @@ import json
 import os
 import time
 import math
+import multiprocessing as mp
 from opponent import get_opponent_move
 
 # Constants
@@ -147,91 +148,142 @@ def draw_board(game, top_left):
             text = font.render(val, True, X_COLOR if val == 'X' else O_COLOR)
             screen.blit(text, text.get_rect(center=(center_x, center_y)))
 
+def run_simulated_game(q_table, result_queue, epsilon):
+    game = TicTacToe()
+    agent = QLearningAgent(epsilon=epsilon)
+    agent.q_table = q_table
+    state = agent.get_state(game.board)
+    prev_state = None
+    prev_action = None
+    player = 'X'
+
+    while not game.game_over:
+        available = game.available_moves()
+        if player == 'X':
+            action = agent.choose_action(game.board, available)
+        else:
+            action = get_opponent_move(game.board, available)
+        game.make_move(action, player)
+        next_state = agent.get_state(game.board)
+
+        if player == 'X' and prev_state is not None:
+            reward = 0
+            if game.game_over:
+                if game.current_winner == 'X':
+                    reward = 1
+                elif game.current_winner == 'O':
+                    reward = -1
+                else:
+                    reward = 0.5
+            elif winning_opportunity(game.board, 'X'):
+                reward += 0.2
+            elif blocking_opportunity(game.board, 'X'):
+                reward += 0.1
+            agent.learn(prev_state, prev_action, reward, next_state, game.game_over)
+
+        if player == 'X':
+            prev_state = state
+            prev_action = action
+        state = next_state
+        player = 'O' if player == 'X' else 'X'
+
+    result = ('X' if game.current_winner == 'X' else
+              'O' if game.current_winner == 'O' else 'T')
+    result_queue.put((agent.q_table, result))
+
+# Insert into your main training loop:
 def main():
-    games = [TicTacToe() for _ in range(NUM_GAMES)]
-    agent = QLearningAgent(name='Agent', epsilon=0.2, q_table_file='q_table.json')
-    players = ['X'] * NUM_GAMES
-    prev_states = [None] * NUM_GAMES
-    prev_actions = [None] * NUM_GAMES
+    manager = mp.Manager()
+    q_table = manager.dict()
+    result_queue = manager.Queue()
+    epsilon = 0.2
+    agent = QLearningAgent(epsilon=epsilon, q_table_file='q_table.json')
+    agent.load_q_table()
+    for k, v in agent.q_table.items():
+        q_table[k] = v
 
-    x_wins = o_wins = ties = games_finished_in_batch = 0
-    batch_size = NUM_GAMES
+    # Visual Pygame setup
+    games = [TicTacToe() for _ in range(VISIBLE_GAMES)]
+    players = ['X'] * VISIBLE_GAMES
+    prev_states = [None] * VISIBLE_GAMES
+    prev_actions = [None] * VISIBLE_GAMES
 
+    pygame.init()
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption("Tic-Tac-Toe AI Training")
+    font = pygame.font.SysFont(None, CELL_SIZE // 2)
+    pygame.display.set_icon(pygame.image.load('ai_logo.webp'))
     clock = pygame.time.Clock()
     running = True
-    last_save_time = time.time()
+
+    last_save = time.time()
+    batch = 0
+    x, o, t = 0, 0, 0
 
     while running:
-        clock.tick(120)
+        clock.tick(60)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_s:
-                agent.save_q_table()
 
-        if time.time() - last_save_time >= 120:
-            agent.save_q_table()
-            last_save_time = time.time()
+        # Launch multiprocessing games
+        processes = []
+        for _ in range(NUM_GAMES - VISIBLE_GAMES):
+            p = mp.Process(target=run_simulated_game,
+                           args=(q_table, result_queue, epsilon))
+            p.start()
+            processes.append(p)
 
-        screen.fill((180, 180, 180))
-
-        for i, game in enumerate(games):
+        for game in games:  # Run visible games sequentially
             if not game.game_over:
+                player = 'X'
                 state = agent.get_state(game.board)
-                available = game.available_moves()
-                if players[i] == 'X':
-                    action = agent.choose_action(game.board, available)
+                if player == 'X':
+                    action = agent.choose_action(game.board, game.available_moves())
                 else:
-                    action = get_opponent_move(game.board, available)
-                valid = game.make_move(action, players[i])
-                next_state = agent.get_state(game.board)
+                    action = get_opponent_move(game.board, game.available_moves())
+                game.make_move(action, player)
 
-                if players[i] == 'X' and prev_states[i] is not None:
-                    reward = 0
-                    if game.game_over:
-                        if game.current_winner == 'X':
-                            reward = 1
-                        elif game.current_winner == 'O':
-                            reward = -1
-                        else:
-                            reward = 0.5
-                    elif winning_opportunity(game.board, 'X'):
-                        reward += 0.2
-                    elif blocking_opportunity(game.board, 'X'):
-                        reward += 0.1
-                    agent.learn(prev_states[i], prev_actions[i], reward, next_state, game.game_over)
-
-                if players[i] == 'X':
-                    prev_states[i] = state
-                    prev_actions[i] = action
-                players[i] = 'O' if players[i] == 'X' else 'X'
-            else:
-                if game.current_winner == 'X':
-                    x_wins += 1
-                elif game.current_winner == 'O':
-                    o_wins += 1
-                else:
-                    ties += 1
-                games_finished_in_batch += 1
-
-                if games_finished_in_batch >= batch_size and (x_wins + o_wins + ties) > 0:
-                    with open("results.txt", "a") as f:
-                        f.write(f"X:{x_wins},O:{o_wins},T:{ties}\n")
-                    x_wins = o_wins = ties = games_finished_in_batch = 0
-
-                game.reset()
-                players[i] = 'X'
-                prev_states[i] = None
-                prev_actions[i] = None
-
+        # Draw visible boards
+        screen.fill((180, 180, 180))
         for i in range(VISIBLE_GAMES):
             row, col = divmod(i, GAMES_PER_ROW)
             draw_board(games[i], (MARGIN + col * (CELL_SIZE * BOARD_SIZE + MARGIN),
                                   MARGIN + row * (CELL_SIZE * BOARD_SIZE + MARGIN)))
         pygame.display.flip()
 
+        for p in processes:
+            p.join()
+
+        while not result_queue.empty():
+            updated_q, result = result_queue.get()
+            for state, actions in updated_q.items():
+                if state not in q_table:
+                    q_table[state] = actions
+                else:
+                    q_table[state].update(actions)
+            if result == 'X':
+                x += 1
+            elif result == 'O':
+                o += 1
+            else:
+                t += 1
+
+        batch += 1
+        if batch % 10 == 0:
+            with open("results.txt", "a") as f:
+                f.write(f"X:{x},O:{o},T:{t}\n")
+            x, o, t = 0, 0, 0
+
+        if time.time() - last_save > 120:
+            agent.q_table = dict(q_table)
+            agent.save_q_table()
+            last_save = time.time()     
+
+    agent.q_table = dict(q_table)
     agent.save_q_table()
     pygame.quit()
 
 if __name__ == "__main__":
+    mp.set_start_method('spawn')
     main()
