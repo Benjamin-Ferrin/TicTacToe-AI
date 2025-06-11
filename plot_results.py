@@ -11,6 +11,7 @@ WINDOW_SIZE = 2000
 UPDATE_SCRIPT = 'other_script.py'
 CHECK_INTERVAL = 2  # seconds
 LINE_WIDTH = 1
+ROLLING_WINDOW = 10  # Rolling average window size
 
 # ==== PARSING ====
 def parse_line(line):
@@ -44,10 +45,22 @@ def compute_average_x_win_rate(lines):
         total_all += total
     return total_x / total_all if total_all else 0
 
+# ==== ROLLING AVERAGE ====
+def rolling_average(data, window=ROLLING_WINDOW):
+    if len(data) < window:
+        return data  # Not enough data to smooth
+    averaged = []
+    for i in range(len(data)):
+        start = max(0, i - window + 1)
+        window_data = data[start:i+1]
+        averaged.append(sum(window_data) / len(window_data))
+    return averaged
+
 # ==== PLOTTING ====
 def plot_live(ax, x_wins, o_wins, ties):
     ax.clear()
-    games = list(range(1, len(x_wins) + 1))
+    # Multiply X-axis by 10 as requested
+    games = [i * 10 for i in range(1, len(x_wins) + 1)]
 
     percentages_x, percentages_o, percentages_t = [], [], []
     for x, o, t in zip(x_wins, o_wins, ties):
@@ -61,11 +74,16 @@ def plot_live(ax, x_wins, o_wins, ties):
             percentages_o.append((o / total) * 100)
             percentages_t.append((t / total) * 100)
 
-    ax.plot(games, percentages_x, label='X Wins %', color='blue', linewidth=LINE_WIDTH)
-    ax.plot(games, percentages_o, label='O Wins %', color='red', linewidth=LINE_WIDTH)
-    ax.plot(games, percentages_t, label='Ties %', color='gray', linewidth=LINE_WIDTH)
+    # Apply rolling average smoothing
+    percentages_x_smoothed = rolling_average(percentages_x)
+    percentages_o_smoothed = rolling_average(percentages_o)
+    percentages_t_smoothed = rolling_average(percentages_t)
 
-    ax.set_title('Tic-Tac-Toe Results Live Plot (Percentages)')
+    ax.plot(games, percentages_x_smoothed, label='X Wins % (Rolling Avg)', color='blue', linewidth=LINE_WIDTH)
+    ax.plot(games, percentages_o_smoothed, label='O Wins % (Rolling Avg)', color='red', linewidth=LINE_WIDTH)
+    ax.plot(games, percentages_t_smoothed, label='Ties % (Rolling Avg)', color='gray', linewidth=LINE_WIDTH)
+
+    ax.set_title('Tic-Tac-Toe Results Live Plot (Percentages with Rolling Average)')
     ax.set_xlabel('Game Number')
     ax.set_ylabel('Percentage (%)')
     ax.set_ylim(0, 100)

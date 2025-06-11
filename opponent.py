@@ -1,26 +1,53 @@
 import random
-import copy
-from analyze_results import compute_average_x_win_rate
 
+# --------- Analyze Results ---------
+def compute_average_x_win_rate():
+    try:
+        with open('requirements.txt', 'r') as file:
+            lines = file.readlines()
+            x_wins = 0
+            total = 0
+            for line in lines:
+                if line.startswith("X:"):
+                    parts = line.strip().split(',')
+                    for part in parts:
+                        label, val = part.split(':')
+                        val = int(val)
+                        if label == 'X':
+                            x_wins += val
+                        total += val
+            return x_wins / total if total > 0 else 0
+    except FileNotFoundError:
+        return 0.0  # Default to easiest if no data
+
+# --------- Strategy Selection Wrapper ---------
+def get_opponent_move(board, available_moves):
+    x_win_rate = compute_average_x_win_rate()
+
+    if x_win_rate < 0.6:
+        return random_opponent_move(board, available_moves)
+    elif x_win_rate < 0.8:
+        return medium_opponent_move(board, available_moves)
+    else:
+        return minimax_opponent_move(board, available_moves)
+
+# --------- Opponent Strategies ---------
 def random_opponent_move(board, available_moves):
     return random.choice(available_moves)
 
 def medium_opponent_move(board, available_moves):
-    # Take winning move if available
     for move in available_moves:
         new_board = board[:]
         new_board[move] = 'O'
         if check_winner(new_board, move, 'O'):
             return move
 
-    # Block opponent's winning move
     for move in available_moves:
         new_board = board[:]
         new_board[move] = 'X'
         if check_winner(new_board, move, 'X'):
             return move
 
-    # Otherwise random
     return random.choice(available_moves)
 
 def minimax_opponent_move(board, available_moves):
@@ -35,25 +62,12 @@ def minimax_opponent_move(board, available_moves):
             best_move = move
     return best_move
 
-# --- Helper functions ---
-
-def check_winner(board, square, letter):
-    row_ind = square // 3
-    if all(board[row_ind * 3 + i] == letter for i in range(3)):
-        return True
-    col_ind = square % 3
-    if all(board[col_ind + i * 3] == letter for i in range(3)):
-        return True
-    if square % 2 == 0:
-        if all(board[i] == letter for i in [0, 4, 8]) or all(board[i] == letter for i in [2, 4, 6]):
-            return True
-    return False
-
+# --------- Minimax and Helpers ---------
 def minimax(board, is_maximizing):
     winner = get_winner(board)
     if winner == 'O': return 1
     if winner == 'X': return -1
-    if ' ' not in board: return 0  # Tie
+    if ' ' not in board: return 0
 
     if is_maximizing:
         best = -float('inf')
@@ -85,3 +99,15 @@ def get_winner(board):
     if board[2] != ' ' and board[2] == board[4] == board[6]:
         return board[2]
     return None
+
+def check_winner(board, square, letter):
+    row_ind = square // 3
+    if all(board[row_ind * 3 + i] == letter for i in range(3)):
+        return True
+    col_ind = square % 3
+    if all(board[col_ind + i * 3] == letter for i in range(3)):
+        return True
+    if square % 2 == 0:
+        if all(board[i] == letter for i in [0, 4, 8]) or all(board[i] == letter for i in [2, 4, 6]):
+            return True
+    return False

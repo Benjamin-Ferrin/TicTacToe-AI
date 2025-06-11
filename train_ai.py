@@ -214,7 +214,7 @@ def main():
                     ties += 1
                 games_finished_in_batch += 1
 
-                if games_finished_in_batch >= batch_size:
+                if games_finished_in_batch >= batch_size and (x_wins + o_wins + ties) > 0:
                     with open("results.txt", "a") as f:
                         f.write(f"X:{x_wins},O:{o_wins},T:{ties}\n")
                     x_wins = o_wins = ties = games_finished_in_batch = 0
