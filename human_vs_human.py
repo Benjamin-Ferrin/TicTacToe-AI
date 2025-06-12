@@ -21,9 +21,10 @@ pygame.display.set_caption("Tic-Tac-Toe: Human vs. Human")
 font = pygame.font.SysFont(None, FONT_SIZE)
 small_font = pygame.font.SysFont(None, 28)
 try:
-    pygame.display.set_icon(pygame.image.load('ai_logo.webp'))
+    pygame.display.set_icon(pygame.image.load('ai_logo.ico'))
 except:
     print("Warning: icon not found.")
+    pygame.display.set_icon()
 
 
 class TicTacToe:

@@ -31,9 +31,10 @@ screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Tic-Tac-Toe AI Training")
 font = pygame.font.SysFont(None, CELL_SIZE // 2)
 try:
-    pygame.display.set_icon(pygame.image.load('ai_logo.webp'))
+    pygame.display.set_icon(pygame.image.load('ai_logo.ico'))
 except:
     print("Warning: icon not found.")
+    pygame.display.set_icon()
 
 if not os.path.exists("results.txt"):
     with open("results.txt", "w"): pass
@@ -115,6 +116,7 @@ class QLearningAgent:
         self.epsilon_min = epsilon_min  # Minimum exploration rate
         self.q_table_file = q_table_file
         self.lock = lock
+        self.learning_count = 0  # Track number of learning steps
         if q_table is None:
             self.load_q_table()
 
@@ -168,8 +170,13 @@ class QLearningAgent:
             # Q-learning update with momentum
             new_value = old_value + self.alpha * (reward + self.gamma * next_max - old_value)
             self.q_table[state][action] = new_value
-            # Decay epsilon after each learning step (i.e., after each move)
-            self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+            
+            # Increment learning count
+            self.learning_count += 1
+            
+            # Decay epsilon based on learning count
+            if self.learning_count % 100 == 0:  # Decay every 100 learning steps
+                self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
         finally:
             if self.lock:
                 self.lock.release()
@@ -208,13 +215,12 @@ def play_game_parallel(args):
     agent_params, q_table, lock, game_idx = args
     agent = QLearningAgent(**agent_params, q_table=q_table, lock=lock)
     game = TicTacToe()
-    player = 'X'
+    player = 'X' if game_idx % 2 == 0 else 'O'  # Alternate starting player
     prev_state = None
     prev_action = None
     x_win = o_win = tie = 0
     for _ in range(1):  # Play one game per call
         game.reset()
-        player = 'X'
         prev_state = None
         prev_action = None
         while not game.game_over:
@@ -230,29 +236,29 @@ def play_game_parallel(args):
                 reward = 0
                 if game.game_over:
                     if game.current_winner == 'X':
-                        reward = 2.0
+                        reward = 5.0  # Increased reward for winning
                     elif game.current_winner == 'O':
-                        reward = -2.0
+                        reward = -5.0  # Increased penalty for losing
                     else:
-                        reward = 0.5
+                        reward = 1.0  # Increased reward for tie
                 else:
                     double_threats = count_winning_moves(game.board, 'X') >= 2
                     if double_threats:
-                        reward += 1.5
+                        reward += 2.0  # Increased reward for double threats
                     elif winning_opportunity(game.board, 'X'):
-                        reward += 1.0
+                        reward += 1.0  # Increased reward for winning opportunity
                     elif blocking_opportunity(game.board, 'X'):
-                        reward += 0.8
-                    if action == 4:
-                        reward += 0.3
-                    elif action in [0, 2, 6, 8]:
-                        reward += 0.2
-                    elif action in [1, 3, 5, 7]:
-                        reward += 0.1
+                        reward += 1.5  # Increased reward for blocking
+                    if action == 4:  # Center
+                        reward += 0.3  # Increased center reward
+                    elif action in [0, 2, 6, 8]:  # Corners
+                        reward += 0.2  # Increased corner reward
+                    elif action in [1, 3, 5, 7]:  # Edges
+                        reward += 0.1  # Increased edge reward
                     temp_board = game.board[:]
                     temp_board[action] = ' '
                     if winning_opportunity(temp_board, 'O'):
-                        reward -= 0.5
+                        reward -= 1.0  # Increased penalty for giving opponent winning opportunity
                 agent.learn(prev_state, prev_action, reward, next_state, game.game_over)
             if player == 'X':
                 prev_state = state
@@ -265,7 +271,7 @@ def play_game_parallel(args):
             o_win = 1
         else:
             tie = 1
-    return (game.board, x_win, o_win, tie)
+    return (game.board, x_win, o_win, tie, agent.learning_count)
 
 def main():
     manager = Manager()
@@ -274,12 +280,12 @@ def main():
     # Use the same epsilon_decay and epsilon_min as in the headless script
     agent_params = dict(
         name='Agent',
-        epsilon=0.2,
+        epsilon=0.5,
         q_table_file='q_table.json',
         alpha=0.3,
         gamma=0.95,
-        epsilon_decay=0.9999,
-        epsilon_min=0.01
+        epsilon_decay=0.99995,
+        epsilon_min=0.001
     )
     # Load Q-table if exists
     if os.path.exists('q_table.json'):
@@ -289,11 +295,17 @@ def main():
     display_games = [TicTacToe() for _ in range(VISIBLE_GAMES)]
     display_boards = [[' '] * (BOARD_SIZE * BOARD_SIZE) for _ in range(VISIBLE_GAMES)]
     x_wins = o_wins = ties = games_finished_in_batch = 0
-    batch_size = NUM_GAMES
+    total_learning_steps = 0
+    batch_size = 1000
     clock = pygame.time.Clock()
     running = True
     last_save_time = time.time()
-    pool = Pool(processes=min(multiprocessing.cpu_count(), NUM_GAMES))
+    pool = Pool(processes=min(multiprocessing.cpu_count() - 1, NUM_GAMES))
+    
+    # Add close button
+    close_button_rect = pygame.Rect(WIDTH - 40, 10, 30, 30)
+    mouse_pos = (0, 0)
+    
     while running:
         clock.tick(60)
         for event in pygame.event.get():
@@ -302,10 +314,17 @@ def main():
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_s:
                 agent = QLearningAgent(**agent_params, q_table=q_table, lock=lock)
                 agent.save_q_table()
+            elif event.type == pygame.MOUSEMOTION:
+                mouse_pos = event.pos
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if close_button_rect.collidepoint(mouse_pos):
+                    running = False
+                    
         if time.time() - last_save_time >= 120:
             agent = QLearningAgent(**agent_params, q_table=q_table, lock=lock)
             agent.save_q_table()
             last_save_time = time.time()
+            
         screen.fill((180, 180, 180))
         # Run NUM_GAMES games in parallel
         args = [(agent_params, q_table, lock, i) for i in range(NUM_GAMES)]
@@ -318,17 +337,27 @@ def main():
         x_wins = sum(r[1] for r in results)
         o_wins = sum(r[2] for r in results)
         ties = sum(r[3] for r in results)
+        total_learning_steps += sum(r[4] for r in results)
         games_finished_in_batch = NUM_GAMES
-        if games_finished_in_batch >= batch_size and (x_wins + o_wins + ties) > 0:
-            with open("results.txt", "a") as f:
-                f.write(f"X:{x_wins},O:{o_wins},T:{ties}\n")
-            x_wins = o_wins = ties = games_finished_in_batch = 0
+        
+        # Update epsilon based on total learning steps
+        agent_params['epsilon'] = max(agent_params['epsilon_min'], 
+                                    0.5 * (agent_params['epsilon_decay'] ** (total_learning_steps / 100)))
+        
+        # Draw close button
+        button_color = (255, 70, 70) if close_button_rect.collidepoint(mouse_pos) else (200, 50, 50)
+        pygame.draw.rect(screen, button_color, close_button_rect)
+        close_text = font.render("X", True, (255, 255, 255))
+        close_text_rect = close_text.get_rect(center=close_button_rect.center)
+        screen.blit(close_text, close_text_rect)
+        
         # Draw boards
         for i in range(VISIBLE_GAMES):
             row, col = divmod(i, GAMES_PER_ROW)
             draw_board(display_games[i], (MARGIN + col * (CELL_SIZE * BOARD_SIZE + MARGIN),
                                           MARGIN + row * (CELL_SIZE * BOARD_SIZE + MARGIN)))
         pygame.display.flip()
+        
     # Save Q-table at the end
     agent = QLearningAgent(**agent_params, q_table=q_table, lock=lock)
     agent.save_q_table()

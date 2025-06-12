@@ -20,14 +20,16 @@ BUTTON_HOVER_COLOR = (130, 130, 255)
 BUTTON_TEXT_COLOR = (255, 255, 255)
 
 pygame.init()
+try:
+    pygame.display.set_icon(pygame.image.load('ai_logo.ico'))
+except:
+    print("Warning: icon not found.")
+    pygame.display.set_icon()
+
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Tic-Tac-Toe AI vs. Human")
 font = pygame.font.SysFont(None, FONT_SIZE)
 small_font = pygame.font.SysFont(None, 28)
-try:
-    pygame.display.set_icon(pygame.image.load('ai_logo.webp'))
-except:
-    print("Warning: icon not found.")
 
 
 class TicTacToe:

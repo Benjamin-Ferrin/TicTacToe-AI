@@ -14,13 +14,14 @@ O_COLOR = (0, 0, 200)  # Algorithm is O
 
 pygame.init()
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Tic-Tac-Toe Algorithm vs. Human")
+pygame.display.set_caption("Tic-Tac-Toe Minimax vs. Human")
 font = pygame.font.SysFont(None, FONT_SIZE)
 small_font = pygame.font.SysFont(None, 28)
 try:
-    pygame.display.set_icon(pygame.image.load('ai_logo.webp'))
+    pygame.display.set_icon(pygame.image.load('ai_logo.ico'))
 except:
     print("Warning: icon not found.")
+    pygame.display.set_icon()
 
 
 class TicTacToe:
@@ -63,62 +64,39 @@ def is_winner(board, letter):
     ]
     return any(all(board[i] == letter for i in combo) for combo in wins)
 
-def minimax(board, player):
+def minimax(board, player, depth=0):
     opponent = 'O' if player == 'X' else 'X'
-
-    # 1. Win: complete a row if possible
-    for i in range(9):
-        if board[i] == ' ':
-            board[i] = player
-            if is_winner(board, player):
-                board[i] = ' '
-                return (1, i)
-            board[i] = ' '
-
-    # 2. Block: stop opponent’s win
-    for i in range(9):
-        if board[i] == ' ':
-            board[i] = opponent
-            if is_winner(board, opponent):
-                board[i] = ' '
-                return (1, i)
-            board[i] = ' '
-
-    # 3. Fork: create two threats
-    def count_wins(b, p):
-        cnt = 0
-        for j in range(9):
-            if b[j] == ' ':
-                b[j] = p
-                if is_winner(b, p):
-                    cnt += 1
-                b[j] = ' '
-        return cnt
-
-    for i in [0,2,6,8,4,1,3,5,7]:
-        if board[i] == ' ':
-            board[i] = player
-            if count_wins(board, player) >= 2:
-                board[i] = ' '
-                return (1, i)
-            board[i] = ' '
-
-    # 4. Block fork
-    for i in [0,2,6,8,4,1,3,5,7]:
-        if board[i] == ' ':
-            board[i] = opponent
-            if count_wins(board, opponent) >= 2:
-                board[i] = ' '
-                return (1, i)
-            board[i] = ' '
-
-    # 5. Center, corners, sides order
-    for i in [4, 0,2,6,8, 1,3,5,7]:
-        if board[i] == ' ':
-            return (0, i)
-
-    # 6. Fallback: no moves left
-    return (0, None)
+    
+    # Check for terminal states
+    if is_winner(board, player):
+        return (10 - depth, None)
+    if is_winner(board, opponent):
+        return (depth - 10, None)
+    if ' ' not in board:
+        return (0, None)
+    
+    # Initialize best score and move
+    best_score = float('-inf') if player == 'O' else float('inf')
+    best_move = None
+    
+    # Try each available move
+    for move in range(9):
+        if board[move] == ' ':
+            board[move] = player
+            score, _ = minimax(board, opponent, depth + 1)
+            board[move] = ' '  # Undo move
+            
+            # Update best score and move
+            if player == 'O':  # Maximizing player
+                if score > best_score:
+                    best_score = score
+                    best_move = move
+            else:  # Minimizing player
+                if score < best_score:
+                    best_score = score
+                    best_move = move
+    
+    return (best_score, best_move)
 
 def draw_board(board):
     screen.fill(BG_COLOR)
@@ -152,9 +130,10 @@ def main():
     game = TicTacToe()
     human_score = 0
     algo_score = 0
-    turn = 'X'  # Human always starts
+    turn = 'X'  # Start with X
     point_awarded = False
     auto_restart = None
+    game_count = 0  # Track number of games played
 
     clock = pygame.time.Clock()
     running = True
@@ -189,10 +168,12 @@ def main():
                 algo_score += 0.5
             point_awarded = True
             auto_restart = time.time() + 2  # 2 seconds before restart
+            game_count += 1
 
         if auto_restart and time.time() >= auto_restart:
             game = TicTacToe()
-            turn = 'X'
+            # Alternate starting player every game
+            turn = 'O' if game_count % 2 == 0 else 'X'
             auto_restart = None
             point_awarded = False
 

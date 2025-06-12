@@ -21,15 +21,15 @@ TOGGLE_BUTTON_HOVER_COLOR = (80, 120, 160)   # Darker hover
 # --- INIT ---
 pygame.init()
 screen_width = GRID_COLS * (BUTTON_WIDTH + BUTTON_MARGIN) + PADDING * 2 - BUTTON_MARGIN
-screen_height = GRID_ROWS * (BUTTON_HEIGHT + BUTTON_MARGIN) + PADDING * 2
+screen_height = GRID_ROWS * (BUTTON_HEIGHT + BUTTON_MARGIN) - PADDING * 1.5
 screen = pygame.display.set_mode((screen_width, screen_height))
 pygame.display.set_caption("Tic-Tac-Toe: Menu")
 font = pygame.font.SysFont("arial", 24)
 try:
-    pygame.display.set_icon(pygame.image.load('ai_logo.webp'))
+    pygame.display.set_icon(pygame.image.load('ai_logo.ico'))
 except:
     print("Warning: icon not found.")
-
+    pygame.display.set_icon()
 
 # --- SCRIPTS ---
 script_paths = [
