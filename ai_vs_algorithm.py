@@ -22,7 +22,11 @@ screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Tic-Tac-Toe AI vs Minimax")
 font = pygame.font.SysFont(None, FONT_SIZE)
 small_font = pygame.font.SysFont(None, 28)
-pygame.display.set_icon(pygame.image.load('ai_logo.webp'))
+try:
+    pygame.display.set_icon(pygame.image.load('ai_logo.webp'))
+except:
+    print("Warning: icon not found.")
+
 
 class TicTacToe:
     def __init__(self):

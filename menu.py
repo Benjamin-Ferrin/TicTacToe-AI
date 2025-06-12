@@ -25,7 +25,11 @@ screen_height = GRID_ROWS * (BUTTON_HEIGHT + BUTTON_MARGIN) + PADDING * 2
 screen = pygame.display.set_mode((screen_width, screen_height))
 pygame.display.set_caption("Tic-Tac-Toe: Menu")
 font = pygame.font.SysFont("arial", 24)
-pygame.display.set_icon(pygame.image.load('ai_logo.webp'))
+try:
+    pygame.display.set_icon(pygame.image.load('ai_logo.webp'))
+except:
+    print("Warning: icon not found.")
+
 
 # --- SCRIPTS ---
 script_paths = [
@@ -34,7 +38,7 @@ script_paths = [
     ("Face Minimax", "face_algorithm.py"),
     ("AI vs. Minimax", "ai_vs_algorithm.py"),
     ("Human vs. Human", "human_vs_human.py"),
-    ("Plot Results", "plot_results.py"),
+    (" Results", "plot_results.py"),
 ]
 
 # Track whether headless mode is enabled for Train AI

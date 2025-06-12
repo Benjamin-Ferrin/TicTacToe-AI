@@ -2,24 +2,183 @@ import pygame
 import random
 import json
 import os
+import time
+import math
 import multiprocessing as mp
 from opponent import get_opponent_move
 
-# === Your classes (TicTacToe, QLearningAgent, winning_opportunity, blocking_opportunity) unchanged ===
-# Paste them here exactly as you provided.
+# Constants
+BOARD_SIZE = 3
+NUM_GAMES = 1000000  # 1 million games
+LOG_INTERVAL = 100  # Log every 100 games
+CHUNK_SIZE = 1000  # Number of games per process
 
-# ... (Include all classes exactly as you gave before) ...
+# Colors for progress bar
+BG_COLOR = (40, 40, 40)
+BAR_COLOR = (50, 200, 50)
+TEXT_COLOR = (255, 255, 255)
 
-# === Helper: Run multiple training games in one process chunk ===
-def train_chunk(start_game, num_games, q_table_data):
+class TicTacToe:
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.board = [' '] * (BOARD_SIZE * BOARD_SIZE)
+        self.current_winner = None
+        self.game_over = False
+
+    def available_moves(self):
+        return [i for i, spot in enumerate(self.board) if spot == ' ']
+
+    def empty_squares(self):
+        return ' ' in self.board
+
+    def make_move(self, square, letter):
+        if self.board[square] == ' ':
+            self.board[square] = letter
+            if self.winner(square, letter):
+                self.current_winner = letter
+                self.game_over = True
+            elif not self.empty_squares():
+                self.game_over = True
+            return True
+        return False
+
+    def winner(self, square, letter):
+        row_ind = square // BOARD_SIZE
+        if all(self.board[row_ind * BOARD_SIZE + i] == letter for i in range(BOARD_SIZE)):
+            return True
+        col_ind = square % BOARD_SIZE
+        if all(self.board[col_ind + i * BOARD_SIZE] == letter for i in range(BOARD_SIZE)):
+            return True
+        if square % 2 == 0:
+            if all(self.board[i] == letter for i in [0, 4, 8]) or all(self.board[i] == letter for i in [2, 4, 6]):
+                return True
+        return False
+
+def winning_opportunity(board, letter):
+    for i in range(BOARD_SIZE * BOARD_SIZE):
+        if board[i] == ' ':
+            board[i] = letter
+            t = TicTacToe()
+            t.board = board[:]
+            if t.winner(i, letter):
+                board[i] = ' '
+                return True
+            board[i] = ' '
+    return False
+
+def count_winning_moves(board, letter):
+    count = 0
+    for i in range(len(board)):
+        if board[i] == ' ':
+            board[i] = letter
+            temp = TicTacToe()
+            temp.board = board[:]
+            if temp.winner(i, letter):
+                count += 1
+            board[i] = ' '
+    return count
+
+def blocking_opportunity(board, letter):
+    opponent = 'O' if letter == 'X' else 'X'
+    return winning_opportunity(board, opponent)
+
+class QLearningAgent:
+    def __init__(self, name='Agent', alpha=0.3, gamma=0.95, epsilon=0.5, q_table_file='q_table.json'):
+        self.name = name
+        self.q_table = {}
+        self.alpha = alpha  # Lower learning rate for more stable learning
+        self.gamma = gamma  # Higher discount factor to value future rewards more
+        self.epsilon = epsilon
+        self.epsilon_decay = 0.9999  # Gradually reduce exploration
+        self.epsilon_min = 0.01  # Minimum exploration rate
+        self.q_table_file = q_table_file
+        self.load_q_table()
+
+    def get_state(self, board):
+        return ''.join(board)
+
+    def choose_action(self, board, available_moves):
+        state = self.get_state(board)
+        
+        # Always take winning moves
+        for move in available_moves:
+            temp_board = board[:]
+            temp_board[move] = 'X'
+            if winning_opportunity(temp_board, 'X'):
+                return move
+                
+        # Always block opponent's winning moves
+        for move in available_moves:
+            temp_board = board[:]
+            temp_board[move] = 'O'
+            if winning_opportunity(temp_board, 'O'):
+                return move
+
+        # Epsilon-greedy strategy
+        if random.random() < self.epsilon:
+            return random.choice(available_moves)
+            
+        if state not in self.q_table or len(self.q_table[state]) == 0:
+            return random.choice(available_moves)
+            
+        q_values = [self.q_table[state].get(a, 0) for a in available_moves]
+        max_q = max(q_values)
+        best_actions = [a for a, q in zip(available_moves, q_values) if q == max_q]
+        
+        # Note: Epsilon decay removed from here!
+        return random.choice(best_actions)
+
+    def decay_epsilon(self, steps=1):
+        # Decay epsilon by steps (number of games played)
+        for _ in range(steps):
+            self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+
+    def learn(self, state, action, reward, next_state, done):
+        if state not in self.q_table:
+            self.q_table[state] = {}
+            
+        old_value = self.q_table[state].get(action, 0)
+        
+        # Calculate next state's maximum Q-value
+        if done:
+            next_max = 0
+        elif next_state not in self.q_table:
+            next_max = 0
+        else:
+            next_max = max(self.q_table[next_state].values(), default=0)
+            
+        # Q-learning update with momentum
+        new_value = old_value + self.alpha * (reward + self.gamma * next_max - old_value)
+        self.q_table[state][action] = new_value
+
+    def save_q_table(self):
+        if self.q_table_file:
+            try:
+                with open(self.q_table_file, 'w') as f:
+                    json.dump(self.q_table, f)
+                print(f"{self.name} Q-table saved. Current epsilon: {self.epsilon:.4f}")
+            except Exception as e:
+                print("Save failed:", e)
+
+    def load_q_table(self):
+        if self.q_table_file and os.path.exists(self.q_table_file):
+            with open(self.q_table_file, 'r') as f:
+                self.q_table = json.load(f)
+            print(f"{self.name} Q-table loaded.")
+
+def train_chunk(start_game, num_games, q_table_data, epsilon, epsilon_decay, epsilon_min):
+    """Train a chunk of games in a separate process"""
     agent = QLearningAgent()
-    agent.q_table = q_table_data  # load partial q_table dict
-    
-    x_wins = 0
-    o_wins = 0
-    ties = 0
+    agent.q_table = q_table_data.copy()  # Create a copy of the q_table
+    agent.epsilon = epsilon
+    agent.epsilon_decay = epsilon_decay
+    agent.epsilon_min = epsilon_min
 
-    for game_num in range(num_games):
+    x_wins = o_wins = ties = 0
+
+    for _ in range(num_games):
         game = TicTacToe()
         player = 'X'
         prev_state = None
@@ -28,26 +187,56 @@ def train_chunk(start_game, num_games, q_table_data):
         while not game.game_over:
             state = agent.get_state(game.board)
             available = game.available_moves()
-            action = agent.choose_action(game.board, available) if player == 'X' else get_opponent_move(game.board, available)
+            
+            if player == 'X':
+                action = agent.choose_action(game.board, available)
+            else:
+                action = get_opponent_move(game.board, available)
+                
             game.make_move(action, player)
             next_state = agent.get_state(game.board)
 
             if player == 'X' and prev_state is not None:
                 reward = 0
                 if game.game_over:
-                    reward = 1 if game.current_winner == 'X' else -1 if game.current_winner == 'O' else 0.5
-                elif winning_opportunity(game.board, 'X'):
-                    reward += 0.2
-                elif blocking_opportunity(game.board, 'X'):
-                    reward += 0.1
+                    if game.current_winner == 'X':
+                        reward = 2.0
+                    elif game.current_winner == 'O':
+                        reward = -2.0
+                    else:
+                        reward = 0.5
+                else:
+                    # Strategic rewards
+                    double_threats = count_winning_moves(game.board, 'X') >= 2
+                    if double_threats:
+                        reward += 1.5
+                    elif winning_opportunity(game.board, 'X'):
+                        reward += 1.0
+                    elif blocking_opportunity(game.board, 'X'):
+                        reward += 0.8
+
+                    # Position-based rewards
+                    if action == 4:  # Center
+                        reward += 0.3
+                    elif action in [0, 2, 6, 8]:  # Corners
+                        reward += 0.2
+                    elif action in [1, 3, 5, 7]:  # Edges
+                        reward += 0.1
+
+                    # Penalize moves that give opponent winning opportunities
+                    temp_board = game.board[:]
+                    temp_board[action] = ' '
+                    if winning_opportunity(temp_board, 'O'):
+                        reward -= 0.5
+
                 agent.learn(prev_state, prev_action, reward, next_state, game.game_over)
 
             if player == 'X':
                 prev_state = state
                 prev_action = action
-
             player = 'O' if player == 'X' else 'X'
 
+        # Update statistics
         if game.current_winner == 'X':
             x_wins += 1
         elif game.current_winner == 'O':
@@ -55,105 +244,135 @@ def train_chunk(start_game, num_games, q_table_data):
         else:
             ties += 1
 
-    # Return results + updated q_table from this chunk
-    return (x_wins, o_wins, ties, agent.q_table)
+        # Decay epsilon ONCE per game
+        agent.decay_epsilon(1)
 
-# === Main training with parallelization + progress bar ===
-def train_with_progress_bar_parallel(num_games=100000, log_interval=10000, chunk_size=1000):
+    # Return the final epsilon as well
+    return (x_wins, o_wins, ties, agent.q_table, agent.epsilon)
+
+def train_headless(num_games=NUM_GAMES, log_interval=LOG_INTERVAL):
+    # Initialize pygame for progress bar
     pygame.init()
-    WIDTH, HEIGHT = 600, 200
+    WIDTH, HEIGHT = 800, 200
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("Training AI Agent (Parallel)")
+    pygame.display.set_caption("Tic-Tac-Toe AI Training (Headless)")
     font = pygame.font.SysFont("Arial", 28)
     small_font = pygame.font.SysFont("Arial", 20)
     clock = pygame.time.Clock()
+    try:
+        pygame.display.set_icon(pygame.image.load('ai_logo.webp'))
+    except:
+        print("Warning: icon not found.")
 
+    try:
+        pygame.display.set_icon(pygame.image.load('ai_logo.webp'))
+    except:
+        print("Warning: icon not found.")
+
+    # Initialize agent and results tracking
     agent = QLearningAgent()
     if not os.path.exists("results.txt"):
         with open("results.txt", "w"): pass
 
     total_x_wins = total_o_wins = total_ties = 0
-    games_done = 0
+    games_completed = 0
+    last_save_time = time.time()
 
+    # Calculate number of chunks
+    num_chunks = (num_games + CHUNK_SIZE - 1) // CHUNK_SIZE
+
+    # Create process pool
     pool = mp.Pool(mp.cpu_count())
 
-    # We will keep a shared Q-table in main, merge deltas returned from workers
-    q_table = agent.q_table
-
-    # Precalculate how many chunks to run
-    total_chunks = num_games // chunk_size
-    if num_games % chunk_size != 0:
-        total_chunks += 1
-
-    # Submit all jobs upfront
+    # Submit all jobs
     jobs = []
-    for i in range(total_chunks):
-        start = i * chunk_size
-        size = min(chunk_size, num_games - start)
-        jobs.append(pool.apply_async(train_chunk, args=(start, size, q_table)))
+    # Track the epsilon for each chunk
+    current_epsilon = agent.epsilon
+    for i in range(num_chunks):
+        start = i * CHUNK_SIZE
+        size = min(CHUNK_SIZE, num_games - start)
+        # Pass current epsilon, decay, and min to the chunk
+        jobs.append(pool.apply_async(
+            train_chunk,
+            args=(start, size, agent.q_table, current_epsilon, agent.epsilon_decay, agent.epsilon_min)
+        ))
+        # Decay epsilon for the next chunk (simulate per-game decay)
+        for _ in range(size):
+            current_epsilon = max(agent.epsilon_min, current_epsilon * agent.epsilon_decay)
 
     running = True
-    while running:
-        pygame.event.pump()  # keep pygame responsive
-        screen.fill((40, 40, 40))
+    while running and games_completed < num_games:
+        # Handle pygame events
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_s:
+                agent.save_q_table()
 
-        # Count finished jobs
-        finished_jobs = [job for job in jobs if job.ready()]
-        games_done = sum(min(chunk_size, num_games - i*chunk_size) for i, job in enumerate(jobs) if job.ready())
+        # Check completed jobs
+        completed_jobs = [job for job in jobs if job.ready()]
+        for job in completed_jobs:
+            # Now also get the updated epsilon from the chunk
+            x_wins, o_wins, ties, q_table, chunk_epsilon = job.get()
+            total_x_wins += x_wins
+            total_o_wins += o_wins
+            total_ties += ties
+            games_completed += CHUNK_SIZE
 
-        # Aggregate results and merge Q-tables from finished jobs
-        total_x_wins = 0
-        total_o_wins = 0
-        total_ties = 0
-        merged_q_table = {}
+            # Merge Q-tables
+            for state, actions in q_table.items():
+                if state not in agent.q_table:
+                    agent.q_table[state] = {}
+                for action, value in actions.items():
+                    if action not in agent.q_table[state]:
+                        agent.q_table[state][action] = value
+                    else:
+                        agent.q_table[state][action] = max(value, agent.q_table[state][action])
 
-        for job in finished_jobs:
-            xw, ow, tie, qtab = job.get()
-            total_x_wins += xw
-            total_o_wins += ow
-            total_ties += tie
+            # Update agent's epsilon to the latest from the chunk
+            agent.epsilon = chunk_epsilon
 
-            # Merge q_table results from worker
-            for state, actions in qtab.items():
-                if state not in merged_q_table:
-                    merged_q_table[state] = {}
-                for action, val in actions.items():
-                    merged_q_table[state][action] = max(val, merged_q_table[state].get(action, float('-inf')))
+            # Remove completed job
+            jobs.remove(job)
 
-        # Update main q_table with merged results
-        q_table = merged_q_table
+            # Log results when we have actual data
+            if total_x_wins + total_o_wins + total_ties > 0:
+                with open("results.txt", "a") as f:
+                    f.write(f"X:{total_x_wins},O:{total_o_wins},T:{total_ties}\n")
+                total_x_wins = total_o_wins = total_ties = 0
 
-        # Draw progress bar
-        progress = games_done / num_games
+        # Auto-save every 2 minutes
+        if time.time() - last_save_time >= 120:
+            agent.save_q_table()
+            last_save_time = time.time()
+
+        # Update progress bar
+        screen.fill(BG_COLOR)
+        progress = games_completed / num_games
         bar_width = int(progress * (WIDTH - 100))
         pygame.draw.rect(screen, (80, 80, 80), (50, 100, WIDTH - 100, 30))
-        pygame.draw.rect(screen, (50, 200, 50), (50, 100, bar_width, 30))
+        pygame.draw.rect(screen, BAR_COLOR, (50, 100, bar_width, 30))
 
-        text = font.render("Training in Progress (Parallel)...", True, (255, 255, 255))
-        progress_text = small_font.render(f"Games done: {games_done:,} / {num_games:,}", True, (200, 200, 200))
-
+        # Draw text
+        text = font.render(f"Training Progress: {progress*100:.1f}%", True, TEXT_COLOR)
+        stats_text = small_font.render(
+            f"Games: {games_completed:,}/{num_games:,} | Epsilon: {agent.epsilon:.4f} | Active Processes: {len(jobs)}", 
+            True, TEXT_COLOR
+        )
         screen.blit(text, (50, 40))
-        screen.blit(progress_text, (50, 140))
+        screen.blit(stats_text, (50, 140))
         pygame.display.flip()
 
-        # Save results periodically (every log_interval games)
-        if games_done > 0 and games_done % log_interval < chunk_size:
-            with open("results.txt", "a") as f:
-                f.write(f"X:{total_x_wins},O:{total_o_wins},T:{total_ties}\n")
-            with open(agent.q_table_file, 'w') as f:
-                json.dump(q_table, f)
+        clock.tick(60)  # Cap at 60 FPS
 
-        if games_done >= num_games:
-            running = False
-
-        clock.tick(10)  # reduce CPU usage while waiting
-
+    # Clean up
     pool.close()
     pool.join()
-
-    print("Training complete.")
+    
+    # Final save
+    agent.save_q_table()
     pygame.quit()
 
 if __name__ == "__main__":
-    mp.set_start_method("spawn")
-    train_with_progress_bar_parallel(num_games=100000, log_interval=10000, chunk_size=1000)
+    mp.set_start_method('spawn')  # Required for Windows
+    train_headless()
