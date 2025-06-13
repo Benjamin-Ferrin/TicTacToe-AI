@@ -4,15 +4,12 @@ import json
 import os
 import time
 import math
-import multiprocessing as mp
 from opponent import get_opponent_move
 
 # Constants
 BOARD_SIZE = 3
-NUM_GAMES = 5000000  # 1 million games
+NUM_GAMES = 5000000  # 5 million games
 LOG_INTERVAL = 1000  # Log every 1000 games
-CHUNK_SIZE = 10000  # Increased chunk size for better efficiency
-NUM_PROCESSES = max(1, mp.cpu_count() - 1)  # Leave one core free
 
 # Colors for progress bar
 BG_COLOR = (40, 40, 40)
@@ -91,7 +88,8 @@ class QLearningAgent:
     def __init__(self, name='Agent', alpha=0.3, gamma=0.95, epsilon=0.5, q_table_file='q_table.json'):
         self.name = name
         self.q_table = {}
-        self.alpha = alpha  # Learning rate
+        self.initial_alpha = alpha  # Store initial alpha for decay
+        self.alpha = alpha  # Current learning rate
         self.gamma = gamma  # Discount factor
         self.epsilon = epsilon
         self.epsilon_decay = 0.99995  # Slower decay
@@ -101,7 +99,34 @@ class QLearningAgent:
         self.learning_count = 0
 
     def get_state(self, board):
-        return ''.join(board)
+        # Get all possible board rotations and reflections
+        states = []
+        # Original board
+        states.append(''.join(board))
+        # Rotate 90 degrees
+        rotated = [board[6], board[3], board[0], board[7], board[4], board[1], board[8], board[5], board[2]]
+        states.append(''.join(rotated))
+        # Rotate 180 degrees
+        rotated = [board[8], board[7], board[6], board[5], board[4], board[3], board[2], board[1], board[0]]
+        states.append(''.join(rotated))
+        # Rotate 270 degrees
+        rotated = [board[2], board[5], board[8], board[1], board[4], board[7], board[0], board[3], board[6]]
+        states.append(''.join(rotated))
+        # Horizontal reflection
+        reflected = [board[2], board[1], board[0], board[5], board[4], board[3], board[8], board[7], board[6]]
+        states.append(''.join(reflected))
+        # Vertical reflection
+        reflected = [board[6], board[7], board[8], board[3], board[4], board[5], board[0], board[1], board[2]]
+        states.append(''.join(reflected))
+        # Diagonal reflection (top-left to bottom-right)
+        reflected = [board[0], board[3], board[6], board[1], board[4], board[7], board[2], board[5], board[8]]
+        states.append(''.join(reflected))
+        # Diagonal reflection (top-right to bottom-left)
+        reflected = [board[8], board[5], board[2], board[7], board[4], board[1], board[6], board[3], board[0]]
+        states.append(''.join(reflected))
+        
+        # Return the canonical state (lexicographically smallest)
+        return min(states)
 
     def choose_action(self, board, available_moves):
         state = self.get_state(board)
@@ -147,7 +172,10 @@ class QLearningAgent:
         else:
             next_max = max(self.q_table[next_state].values(), default=0)
             
-        # Q-learning update with momentum
+        # Decay learning rate
+        self.alpha = self.initial_alpha / (1 + self.learning_count * 0.0001)
+            
+        # Q-learning update
         new_value = old_value + self.alpha * (reward + self.gamma * next_max - old_value)
         self.q_table[state][action] = new_value
         
@@ -172,84 +200,6 @@ class QLearningAgent:
             with open(self.q_table_file, 'r') as f:
                 self.q_table = json.load(f)
             print(f"{self.name} Q-table loaded.")
-
-def train_chunk(start_game, num_games, q_table_data, epsilon, epsilon_decay, epsilon_min):
-    """Train a chunk of games in a separate process"""
-    agent = QLearningAgent()
-    agent.q_table = q_table_data.copy()  # Create a copy of the q_table
-    agent.epsilon = epsilon
-    agent.epsilon_decay = epsilon_decay
-    agent.epsilon_min = epsilon_min
-    
-    x_wins = o_wins = ties = 0
-
-    for _ in range(num_games):
-        game = TicTacToe()
-        player = 'X' if start_game % 2 == 0 else 'O'  # Alternate starting player
-        prev_state = None
-        prev_action = None
-
-        while not game.game_over:
-            state = agent.get_state(game.board)
-            available = game.available_moves()
-            
-            if player == 'X':
-                action = agent.choose_action(game.board, available)
-            else:
-                action = get_opponent_move(game.board, available)
-                
-            game.make_move(action, player)
-            next_state = agent.get_state(game.board)
-
-            if player == 'X' and prev_state is not None:
-                reward = 0
-                if game.game_over:
-                    if game.current_winner == 'X':
-                        reward = 5.0  # Increased reward for winning
-                    elif game.current_winner == 'O':
-                        reward = -5.0  # Increased penalty for losing
-                    else:
-                        reward = 1.0  # Increased reward for tie
-                else:
-                    # Strategic rewards
-                    double_threats = count_winning_moves(game.board, 'X') >= 2
-                    if double_threats:
-                        reward += 2.0  # Increased reward for double threats
-                    elif winning_opportunity(game.board, 'X'):
-                        reward += 1.0  # Increased reward for winning opportunity
-                    elif blocking_opportunity(game.board, 'X'):
-                        reward += 1.5  # Increased reward for blocking
-
-                    # Position-based rewards
-                    if action == 4:  # Center
-                        reward += 0.3  # Increased center reward
-                    elif action in [0, 2, 6, 8]:  # Corners
-                        reward += 0.2  # Increased corner reward
-                    elif action in [1, 3, 5, 7]:  # Edges
-                        reward += 0.1  # Increased edge reward
-
-                    # Penalize moves that give opponent winning opportunities
-                    temp_board = game.board[:]
-                    temp_board[action] = ' '
-                    if winning_opportunity(temp_board, 'O'):
-                        reward -= 1.0  # Increased penalty for giving opponent winning opportunity
-
-                agent.learn(prev_state, prev_action, reward, next_state, game.game_over)
-
-            if player == 'X':
-                prev_state = state
-                prev_action = action
-            player = 'O' if player == 'X' else 'X'
-
-        # Update statistics
-        if game.current_winner == 'X':
-            x_wins += 1
-        elif game.current_winner == 'O':
-            o_wins += 1
-        else:
-            ties += 1
-
-    return (x_wins, o_wins, ties, agent.q_table, agent.epsilon, agent.learning_count)
 
 def train_headless(num_games=NUM_GAMES, log_interval=LOG_INTERVAL):
     # Initialize pygame for progress bar
@@ -277,24 +227,13 @@ def train_headless(num_games=NUM_GAMES, log_interval=LOG_INTERVAL):
     total_learning_steps = 0
     games_since_last_log = 0
 
-    # Create process pool with fixed number of processes
-    pool = mp.Pool(NUM_PROCESSES)
-    
-    # Calculate number of chunks
-    num_chunks = (num_games + CHUNK_SIZE - 1) // CHUNK_SIZE
-    
-    # Submit initial batch of jobs
-    jobs = []
-    current_epsilon = agent.epsilon
-    for i in range(min(NUM_PROCESSES, num_chunks)):
-        start = i * CHUNK_SIZE
-        size = min(CHUNK_SIZE, num_games - start)
-        jobs.append(pool.apply_async(
-            train_chunk,
-            args=(start, size, agent.q_table, current_epsilon, agent.epsilon_decay, agent.epsilon_min)
-        ))
+    # Buffer for partial results to ensure each line in results.txt is for exactly 1000 games
+    buffer_x_wins = 0
+    buffer_o_wins = 0
+    buffer_ties = 0
+    buffer_games = 0
+    LOG_LINE_SIZE = log_interval  # Each line in results.txt will represent exactly 1000 games
 
-    next_chunk = NUM_PROCESSES
     running = True
     close_button_rect = pygame.Rect(WIDTH - 40, 10, 30, 30)
     mouse_pos = (0, 0)
@@ -312,51 +251,110 @@ def train_headless(num_games=NUM_GAMES, log_interval=LOG_INTERVAL):
                 if close_button_rect.collidepoint(mouse_pos):
                     running = False
 
-        # Check completed jobs
-        completed_jobs = [job for job in jobs if job.ready()]
-        for job in completed_jobs:
-            x_wins, o_wins, ties, q_table, chunk_epsilon, learning_steps = job.get()
-            total_x_wins += x_wins
-            total_o_wins += o_wins
-            total_ties += ties
-            games_completed += CHUNK_SIZE
-            games_since_last_log += CHUNK_SIZE
-            total_learning_steps += learning_steps
+        # Train a batch of games
+        batch_size = 1000  # Process games in batches for better performance
+        for _ in range(batch_size):
+            game = TicTacToe()
+            prev_state = None
+            prev_action = None
 
-            # Merge Q-tables by averaging values
-            for state, actions in q_table.items():
-                if state not in agent.q_table:
-                    agent.q_table[state] = actions
-                else:
-                    for action, value in actions.items():
-                        if action not in agent.q_table[state]:
-                            agent.q_table[state][action] = value
+            while not game.game_over:
+                state = agent.get_state(game.board)
+                available = game.available_moves()
+                
+                # Agent always plays X
+                action = agent.choose_action(game.board, available)
+                game.make_move(action, 'X')
+                next_state = agent.get_state(game.board)
+
+                if prev_state is not None:
+                    reward = 0
+                    if game.game_over:
+                        if game.current_winner == 'X':
+                            reward = 5.0  # Increased reward for winning
+                        elif game.current_winner == 'O':
+                            reward = -5.0  # Increased penalty for losing
                         else:
-                            # Average the Q-values
-                            agent.q_table[state][action] = (agent.q_table[state][action] + value) / 2
+                            reward = 1.0  # Increased reward for tie
+                    else:
+                        # Strategic rewards
+                        double_threats = count_winning_moves(game.board, 'X') >= 2
+                        if double_threats:
+                            reward += 2.0  # Increased reward for double threats
+                        elif winning_opportunity(game.board, 'X'):
+                            reward += 1.0  # Increased reward for winning opportunity
+                        elif blocking_opportunity(game.board, 'X'):
+                            reward += 1.5  # Increased reward for blocking
 
-            # Update agent's epsilon based on total learning steps
-            agent.epsilon = max(agent.epsilon_min, 0.5 * (agent.epsilon_decay ** (total_learning_steps / 100)))
+                        # Position-based rewards
+                        if action == 4:  # Center
+                            reward += 0.3  # Increased center reward
+                        elif action in [0, 2, 6, 8]:  # Corners
+                            reward += 0.2  # Increased corner reward
+                        elif action in [1, 3, 5, 7]:  # Edges
+                            reward += 0.1  # Increased edge reward
 
-            # Remove completed job
-            jobs.remove(job)
+                        # Penalize moves that give opponent winning opportunities
+                        temp_board = game.board[:]
+                        temp_board[action] = ' '
+                        if winning_opportunity(temp_board, 'O'):
+                            reward -= 1.0  # Increased penalty for giving opponent winning opportunity
 
-            # Submit new job if there are more chunks to process
-            if next_chunk < num_chunks:
-                start = next_chunk * CHUNK_SIZE
-                size = min(CHUNK_SIZE, num_games - start)
-                jobs.append(pool.apply_async(
-                    train_chunk,
-                    args=(start, size, agent.q_table, agent.epsilon, agent.epsilon_decay, agent.epsilon_min)
-                ))
-                next_chunk += 1
+                    agent.learn(prev_state, prev_action, reward, next_state, game.game_over)
 
-            # Log results when we reach the log interval
-            if games_since_last_log >= log_interval:
-                with open("results.txt", "a") as f:
-                    f.write(f"X:{total_x_wins},O:{total_o_wins},T:{total_ties}\n")
-                total_x_wins = total_o_wins = total_ties = 0
-                games_since_last_log = 0
+                prev_state = state
+                prev_action = action
+
+                # Opponent's move
+                if not game.game_over:
+                    opponent_action = get_opponent_move(game.board, game.available_moves())
+                    game.make_move(opponent_action, 'O')
+
+            # Update statistics
+            if game.current_winner == 'X':
+                total_x_wins += 1
+                buffer_x_wins += 1
+            elif game.current_winner == 'O':
+                total_o_wins += 1
+                buffer_o_wins += 1
+            else:
+                total_ties += 1
+                buffer_ties += 1
+
+            games_completed += 1
+            games_since_last_log += 1
+            buffer_games += 1
+            total_learning_steps += 1
+
+        # Write out as many full 1000-game lines as possible
+        while buffer_games >= LOG_LINE_SIZE:
+            # Calculate the proportion of results for 1000 games
+            if buffer_games == LOG_LINE_SIZE:
+                write_x = buffer_x_wins
+                write_o = buffer_o_wins
+                write_t = buffer_ties
+            else:
+                # Scale down the buffer to exactly 1000 games
+                scale = LOG_LINE_SIZE / buffer_games
+                write_x = int(round(buffer_x_wins * scale))
+                write_o = int(round(buffer_o_wins * scale))
+                write_t = LOG_LINE_SIZE - write_x - write_o  # Ensure sum is 1000
+
+            with open("results.txt", "a") as f:
+                f.write(f"X:{write_x},O:{write_o},T:{write_t}\n")
+
+            # Remove the written results from the buffer
+            if buffer_games == LOG_LINE_SIZE:
+                buffer_x_wins = 0
+                buffer_o_wins = 0
+                buffer_ties = 0
+                buffer_games = 0
+            else:
+                # Remove the written portion from the buffer
+                buffer_x_wins -= write_x
+                buffer_o_wins -= write_o
+                buffer_ties -= write_t
+                buffer_games -= LOG_LINE_SIZE
 
         # Auto-save every 2 minutes
         if time.time() - last_save_time >= 120:
@@ -380,7 +378,7 @@ def train_headless(num_games=NUM_GAMES, log_interval=LOG_INTERVAL):
         # Draw text
         text = font.render(f"Training Progress: {progress*100:.1f}%", True, TEXT_COLOR)
         stats_text = small_font.render(
-            f"Games: {games_completed:,}/{num_games:,} | Epsilon: {agent.epsilon:.4f} | Active Processes: {len(jobs)}", 
+            f"Games: {games_completed:,}/{num_games:,} | Epsilon: {agent.epsilon:.4f}", 
             True, TEXT_COLOR
         )
         screen.blit(text, (50, 40))
@@ -389,14 +387,9 @@ def train_headless(num_games=NUM_GAMES, log_interval=LOG_INTERVAL):
 
         clock.tick(60)  # Cap at 60 FPS
 
-    # Clean up
-    pool.close()
-    pool.join()
-    
     # Final save
     agent.save_q_table()
     pygame.quit()
 
 if __name__ == "__main__":
-    mp.set_start_method('spawn')  # Required for Windows
     train_headless()

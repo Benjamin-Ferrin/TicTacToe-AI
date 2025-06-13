@@ -11,7 +11,7 @@ WINDOW_SIZE = 2000
 UPDATE_SCRIPT = 'other_script.py'
 CHECK_INTERVAL = 2  # seconds
 LINE_WIDTH = 1
-ROLLING_WINDOW = 25  # Rolling average window size
+ROLLING_WINDOW = 20  # Rolling average window size
 
 # --- Remove attempt to set logo via plt.get_current_fig_manager().window.iconbitmap ---
 # This approach is not reliable across platforms and backends.
@@ -64,7 +64,7 @@ def rolling_average(data, window=ROLLING_WINDOW):
 def plot_live(ax, x_wins, o_wins, ties):
     ax.clear()
     # Multiply X-axis by 10 as requested
-    games = [i * 10000 for i in range(1, len(x_wins) + 1)]
+    games = [i * 1000 for i in range(1, len(x_wins) + 1)]
 
     percentages_x, percentages_o, percentages_t = [], [], []
     for x, o, t in zip(x_wins, o_wins, ties):
