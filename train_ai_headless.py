@@ -85,7 +85,7 @@ def blocking_opportunity(board, letter):
     return winning_opportunity(board, opponent)
 
 class QLearningAgent:
-    def __init__(self, name='Agent', alpha=0.3, gamma=0.95, epsilon=0.5, q_table_file='q_table.json'):
+    def __init__(self, name='Agent', alpha=0.3, gamma=0.5, epsilon=0.8, q_table_file='q_table.json'):
         self.name = name
         self.q_table = {}
         self.initial_alpha = alpha  # Store initial alpha for decay
@@ -185,7 +185,7 @@ class QLearningAgent:
         # Decay epsilon based on learning count
         if self.learning_count % 100 == 0:  # Decay every 100 learning steps
             self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
-
+			
     def save_q_table(self):
         if self.q_table_file:
             try:
